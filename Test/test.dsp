@@ -1,25 +1,34 @@
 import("stdfaust.lib");
 
-// --- Contrôles ---
-rec = checkbox("v:Sampler/Record"); 
-vol = hslider("v:Sampler/Gain", 0.5, 0, 1, 0.01);
+// ==========================
+// CONFIGURATION
+bufSize = 48000; // 1 seconde max → ~192 kB sur Teensy
 
-// --- Paramètres ---
-size = 65536; // Env 1.5s à 44.1kHz
+// ==========================
+// MIDI / Teensy parameters
+note = nentry("note", 69, 0, 127, 1); // pitch exposé
+gate = nentry("gate", 0, 0, 1, 1);    // gate exposé
 
-// Index d'écriture (ne tourne que si rec est actif)
-// On utilise une rampe qui se remet à 0 quand on commence à enregistrer
-write_index = (+(1) : %(size)) ~ *(rec);
+ratio = pow(2, (note - 69)/12.0);
 
-// Index de lecture (tourne tout le temps)
-read_index = os.phasor(size, 1.0) : int;
+// ==========================
+// CURSEURS
+// writeIndex : où écrire le signal entrant dans le ruban
+writePhase = os.phasor(1.0 / bufSize);
+writeIndex = writePhase * bufSize;
 
-// La table de données
-// On enregistre l'entrée (_) à l'emplacement 'write_index'
-looper = rwtable(size, 0.0, write_index, _, read_index);
+// readIndex : où lire dans le ruban
+// Multiplié par gate pour ne lire que lorsqu’une note est jouée
+readPhase = gate * os.phasor(ratio / 1.0);  // vitesse MIDI contrôlée par note
+readIndex = readPhase * bufSize;
 
-// Logique de sortie :
-// On ne veut entendre QUE la table de lecture, multipliée par le volume.
-// Si on veut entendre le micro pendant qu'on enregistre (monitoring), 
-// on peut décommenter la partie (+ _)
-process = looper : *(vol) <: _,_;
+// ==========================
+// TABLE / RUBAN
+// Le ruban stocke le signal micro + sample
+ruban = rwtable(bufSize, 0.0);
+
+// ==========================
+// PROCESS
+// _ = signal d'entrée (micro + sample via mixer)
+// On écrit le signal dans le ruban et on lit en même temps
+process = _, writeIndex, readIndex : ruban;

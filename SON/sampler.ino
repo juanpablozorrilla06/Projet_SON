@@ -1,31 +1,35 @@
 #include <Audio.h>
 #include <SD.h>
 #include <Bounce.h>
+#include "sampler.h" // Ton fichier Faust généré
 
-// === Audio ===
-AudioInputI2S        micInput;
-AudioRecordQueue     recorder;
-AudioPlaySdWav       playWav;        // Lecture du sample
-AudioOutputI2S       audioOutput;
+// ================= FAUST =================
+sampler faust; 
 
-AudioConnection      patchCord1(micInput, 0, recorder, 0); // enregistrement
-AudioConnection      patchCord2(micInput, 0, audioOutput, 0); // monitoring gauche
-//AudioConnection      patchCord3(micInput, 1, audioOutput, 1); // monitoring droite
-//AudioConnection      patchCord4(playWav, 0, audioOutput, 0);  // lecture gauche
-AudioConnection      patchCord5(playWav, 0, audioOutput, 1);  // lecture droite
+// ================= AUDIO =================
+AudioInputI2S         micInput;       // Entrée Micro Shield
+AudioRecordQueue      recorder;      // Pour l'enregistrement SD
+AudioOutputI2S        audioOutput;   // Sortie Casque Shield
+AudioMixer4           mixer1;
+
+// Connexions
+AudioConnection patchCord1(micInput, 0, mixer1, 0);   // Micro vers Mixer
+AudioConnection patchCord2(mixer1, 0, faust, 0);      // Mixer vers Faust
+AudioConnection patchCord3(faust, 0, audioOutput, 0); // Faust vers Sortie L
+AudioConnection patchCord4(faust, 0, audioOutput, 1); // Faust vers Sortie R
 
 AudioControlSGTL5000 audioShield;
 
-// === Bouton ===
-const int buttonPin = 0;
-Bounce button(buttonPin, 10);
+// ================= BOUTON =================
+const int buttonPin = 0; 
+Bounce button = Bounce(buttonPin, 15); // 15ms debounce
 
-// === SD / WAV ===
+// ================= SD / WAV =================
 File wavFile;
 const int chipSelect = 10;
 bool isRecording = false;
 
-// ================= HEADER WAV =================
+// Header WAV standard
 void writeWavHeader(File &file) {
   file.seek(0);
   file.write("RIFF", 4);
@@ -41,8 +45,8 @@ void writeWavHeader(File &file) {
   uint16_t bitsPerSample = 16;
   uint32_t byteRate = sampleRate * channels * bitsPerSample / 8;
   uint16_t blockAlign = channels * bitsPerSample / 8;
-  file.write((uint8_t*)&audioFormat, 2);
-  file.write((uint8_t*)&channels, 2);
+  file.write((uint16_t*)&audioFormat, 2);
+  file.write((uint16_t*)&channels, 2);
   file.write((uint32_t*)&sampleRate, 4);
   file.write((uint32_t*)&byteRate, 4);
   file.write((uint16_t*)&blockAlign, 2);
@@ -55,11 +59,9 @@ void writeWavHeader(File &file) {
 void finalizeWavFile(File &file) {
   uint32_t fileSize = file.size();
   uint32_t dataChunkSize = fileSize - 44;
-
   file.seek(4);
   uint32_t chunkSize = fileSize - 8;
   file.write((uint8_t*)&chunkSize, 4);
-
   file.seek(40);
   file.write((uint8_t*)&dataChunkSize, 4);
 }
@@ -67,78 +69,58 @@ void finalizeWavFile(File &file) {
 // ================= SETUP =================
 void setup() {
   Serial.begin(9600);
-  pinMode(buttonPin, INPUT);  // bouton avec pulldown externe
+  
+  // Si ton bouton est branché entre PIN 0 et GND
+  pinMode(buttonPin, INPUT); 
 
-  AudioMemory(60);  // mémoire audio pour enregistrement + playback
-
+  AudioMemory(140);
   audioShield.enable();
-  audioShield.volume(0.6);
+  audioShield.volume(0.5);
   audioShield.inputSelect(AUDIO_INPUT_MIC);
-  audioShield.micGain(30);
+  audioShield.micGain(40);
 
-  recorder.begin();
-
+  // CRITIQUE : Activer le flux dans le mixer
+  mixer1.gain(0, 1.0); 
+  Serial.println("Démarrage du sampler.");
   if (!SD.begin(chipSelect)) {
     Serial.println("Erreur SD !");
-  } else {
-    Serial.println("SD OK");
   }
-  
-  if (SD.exists("REC1.WAV")) {
-    Serial.println("Lecture test...");
-    playWav.play("REC1.WAV");
-}
-  usbMIDI.begin();  // USB MIDI natif
+
+  usbMIDI.begin();
+
+  // Init Faust
+  faust.setParamValue("note", 69.0f);
+  faust.setParamValue("gate", 0.0f);
 }
 
 // ================= LOOP =================
 void loop() {
   button.update();
 
-  // ===== START RECORD =====
-  if (button.read() == HIGH && !isRecording) { // bouton appuyé
+  if (button.risingEdge()) {
     Serial.println("Recording...");
-    SD.remove("REC1.WAV");
-    wavFile = SD.open("REC1.WAV", FILE_WRITE);
-    if (wavFile) {
-      writeWavHeader(wavFile);
-      isRecording = true;
-    } else {
-      Serial.println("Erreur ouverture fichier !");
-    }
+    faust.setParamValue("record", 1.0f);
   }
 
-  // ===== WRITE AUDIO =====
-  if (isRecording && recorder.available() > 0) {
-    int16_t *buffer = recorder.readBuffer();
-    wavFile.write((uint8_t*)buffer, 256);
-    recorder.freeBuffer();
+  if (button.fallingEdge()) {
+    Serial.println("Recording stopped");
+    faust.setParamValue("record", 0.0f);
   }
 
-  // ===== STOP RECORD =====
-  if (button.read() == LOW && isRecording) { // bouton relâché
-    finalizeWavFile(wavFile);
-    wavFile.close();
-    isRecording = false;
-    Serial.println("Stopped.");
-  }
-
-  // ===== USB MIDI =====
+  // GESTION MIDI (VMPK)
   while (usbMIDI.read()) {
-      byte type = usbMIDI.getType();
-      byte data1 = usbMIDI.getData1();
-      byte data2 = usbMIDI.getData2();
+    byte type = usbMIDI.getType();
+    byte data1 = usbMIDI.getData1();
+    byte data2 = usbMIDI.getData2();
 
-      if (type == usbMIDI.NoteOn && data2 > 0) {
-          Serial.print("NoteOn: "); Serial.print(data1);
-          Serial.print(" velocity: "); Serial.println(data2);
-
-          // joue le sample à chaque NoteOn, sans vérifier s'il est déjà en train de jouer
-          playWav.play("REC1.wav");
-      } 
-      else if (type == usbMIDI.NoteOff || (type == usbMIDI.NoteOn && data2 == 0)) {
-          Serial.print("NoteOff: "); Serial.println(data1);
-          playWav.stop();  // stoppe le sample
-      }
+    if (type == usbMIDI.NoteOn && data2 > 0) {
+      faust.setParamValue("note", (float)data1);
+      faust.setParamValue("gate", 1.0f);
+      Serial.print("Note On: "); Serial.println(data1);
+    } 
+    else if (type == usbMIDI.NoteOff || (type == usbMIDI.NoteOn && data2 == 0)) {
+      faust.setParamValue("gate", 0.0f);
+      Serial.println("Note Off");
+    }
   }
 }

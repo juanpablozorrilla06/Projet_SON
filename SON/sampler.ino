@@ -1,5 +1,4 @@
 #include <Audio.h>
-#include <SD.h>
 #include <Bounce.h>
 #include "sampler.h" // Ton fichier Faust généré
 
@@ -25,46 +24,8 @@ const int buttonPin = 0;
 Bounce button = Bounce(buttonPin, 15); // 15ms debounce
 
 // ================= SD / WAV =================
-File wavFile;
 const int chipSelect = 10;
 bool isRecording = false;
-
-// Header WAV standard
-void writeWavHeader(File &file) {
-  file.seek(0);
-  file.write("RIFF", 4);
-  uint32_t chunkSize = 36;
-  file.write((uint8_t*)&chunkSize, 4);
-  file.write("WAVE", 4);
-  file.write("fmt ", 4);
-  uint32_t subchunk1Size = 16;
-  file.write((uint8_t*)&subchunk1Size, 4);
-  uint16_t audioFormat = 1;
-  uint16_t channels = 1;
-  uint32_t sampleRate = 44100;
-  uint16_t bitsPerSample = 16;
-  uint32_t byteRate = sampleRate * channels * bitsPerSample / 8;
-  uint16_t blockAlign = channels * bitsPerSample / 8;
-  file.write((uint16_t*)&audioFormat, 2);
-  file.write((uint16_t*)&channels, 2);
-  file.write((uint32_t*)&sampleRate, 4);
-  file.write((uint32_t*)&byteRate, 4);
-  file.write((uint16_t*)&blockAlign, 2);
-  file.write((uint16_t*)&bitsPerSample, 2);
-  file.write("data", 4);
-  uint32_t dataSize = 0;
-  file.write((uint8_t*)&dataSize, 4);
-}
-
-void finalizeWavFile(File &file) {
-  uint32_t fileSize = file.size();
-  uint32_t dataChunkSize = fileSize - 44;
-  file.seek(4);
-  uint32_t chunkSize = fileSize - 8;
-  file.write((uint8_t*)&chunkSize, 4);
-  file.seek(40);
-  file.write((uint8_t*)&dataChunkSize, 4);
-}
 
 // ================= SETUP =================
 void setup() {

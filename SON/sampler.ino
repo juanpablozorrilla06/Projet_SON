@@ -1,38 +1,30 @@
 #include <Audio.h>
 #include <Bounce.h>
-#include "sampler.h" // Ton fichier Faust généré
+#include "sampler.h"
 
 // ================= FAUST =================
-sampler faust; 
+sampler faust;
 
 // ================= AUDIO =================
-AudioInputI2S         micInput;       // Entrée Micro Shield
-AudioRecordQueue      recorder;      // Pour l'enregistrement SD
-AudioOutputI2S        audioOutput;   // Sortie Casque Shield
+AudioInputI2S         micInput;
+AudioOutputI2S        audioOutput;
 AudioMixer4           mixer1;
 
-// Connexions
-AudioConnection patchCord1(micInput, 0, mixer1, 0);   // Micro vers Mixer
-AudioConnection patchCord2(mixer1, 0, faust, 0);      // Mixer vers Faust
-AudioConnection patchCord3(faust, 0, audioOutput, 0); // Faust vers Sortie L
-AudioConnection patchCord4(faust, 0, audioOutput, 1); // Faust vers Sortie R
+AudioConnection patchCord1(micInput, 0, mixer1, 0);
+AudioConnection patchCord2(mixer1, 0, faust, 0);
+AudioConnection patchCord3(faust, 0, audioOutput, 0);
+AudioConnection patchCord4(faust, 0, audioOutput, 1);
 
 AudioControlSGTL5000 audioShield;
 
 // ================= BOUTON =================
-const int buttonPin = 0; 
-Bounce button = Bounce(buttonPin, 15); // 15ms debounce
-
-// ================= SD / WAV =================
-const int chipSelect = 10;
-bool isRecording = false;
+const int buttonPin = 0;
+Bounce button = Bounce(buttonPin, 15);
 
 // ================= SETUP =================
 void setup() {
   Serial.begin(9600);
-  
-  // Si ton bouton est branché entre PIN 0 et GND
-  pinMode(buttonPin, INPUT); 
+  pinMode(buttonPin, INPUT);
 
   AudioMemory(140);
   audioShield.enable();
@@ -40,16 +32,10 @@ void setup() {
   audioShield.inputSelect(AUDIO_INPUT_MIC);
   audioShield.micGain(40);
 
-  // CRITIQUE : Activer le flux dans le mixer
-  mixer1.gain(0, 1.0); 
-  Serial.println("Démarrage du sampler.");
-  if (!SD.begin(chipSelect)) {
-    Serial.println("Erreur SD !");
-  }
+  mixer1.gain(0, 1.0);
 
   usbMIDI.begin();
 
-  // Init Faust
   faust.setParamValue("note", 69.0f);
   faust.setParamValue("gate", 0.0f);
 }
@@ -59,16 +45,13 @@ void loop() {
   button.update();
 
   if (button.risingEdge()) {
-    Serial.println("Recording...");
     faust.setParamValue("record", 1.0f);
   }
 
   if (button.fallingEdge()) {
-    Serial.println("Recording stopped");
     faust.setParamValue("record", 0.0f);
   }
 
-  // GESTION MIDI (VMPK)
   while (usbMIDI.read()) {
     byte type = usbMIDI.getType();
     byte data1 = usbMIDI.getData1();
@@ -77,11 +60,9 @@ void loop() {
     if (type == usbMIDI.NoteOn && data2 > 0) {
       faust.setParamValue("note", (float)data1);
       faust.setParamValue("gate", 1.0f);
-      Serial.print("Note On: "); Serial.println(data1);
-    } 
+    }
     else if (type == usbMIDI.NoteOff || (type == usbMIDI.NoteOn && data2 == 0)) {
       faust.setParamValue("gate", 0.0f);
-      Serial.println("Note Off");
     }
   }
 }
